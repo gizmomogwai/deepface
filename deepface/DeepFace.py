@@ -5,14 +5,13 @@ import warnings
 import time
 import pickle
 import logging
-
+import sys
 # 3rd party dependencies
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 import cv2
 import tensorflow as tf
-from deprecated import deprecated
 
 # package dependencies
 from deepface.basemodels import (
@@ -41,6 +40,7 @@ if tf_version == 2:
 
 
 def build_model(model_name):
+
     """
     This function builds a deepface model
     Parameters:
@@ -95,6 +95,7 @@ def verify(
     align=True,
     normalization="base",
 ):
+
     """
     This function verifies an image pair is same person or different persons. In the background,
     verification function represents facial images as vectors and then calculates the similarity
@@ -116,11 +117,7 @@ def verify(
             This might be convenient for low resolution images.
 
             detector_backend (string): set face detector backend to opencv, retinaface, mtcnn, ssd,
-            dlib, mediapipe or yolov8.
-
-            align (boolean): alignment according to the eye positions.
-
-            normalization (string): normalize the input image before feeding to model
+            dlib or mediapipe
 
     Returns:
             Verify function returns a dictionary.
@@ -233,6 +230,7 @@ def analyze(
     align=True,
     silent=False,
 ):
+
     """
     This function analyzes facial attributes including age, gender, emotion and race.
     In the background, analysis function builds convolutional neural network models to
@@ -251,9 +249,7 @@ def analyze(
             resolution images.
 
             detector_backend (string): set face detector backend to opencv, retinaface, mtcnn, ssd,
-            dlib, mediapipe or yolov8.
-
-            align (boolean): alignment according to the eye positions.
+            dlib or mediapipe.
 
             silent (boolean): disable (some) log messages
 
@@ -296,19 +292,7 @@ def analyze(
     if isinstance(actions, str):
         actions = (actions,)
 
-    # check if actions is not an iterable or empty.
-    if not hasattr(actions, "__getitem__") or not actions:
-        raise ValueError("`actions` must be a list of strings.")
-
     actions = list(actions)
-
-    # For each action, check if it is valid
-    for action in actions:
-        if action not in ("emotion", "age", "gender", "race"):
-            raise ValueError(
-                f"Invalid action passed ({repr(action)})). "
-                "Valid actions are `emotion`, `age`, `gender`, `race`."
-            )
     # ---------------------------------
     # build models
     models = {}
@@ -407,6 +391,7 @@ def find(
     normalization="base",
     silent=False,
 ):
+
     """
     This function applies verification several times and find the identities in a database
 
@@ -425,15 +410,11 @@ def find(
             distance_metric (string): cosine, euclidean, euclidean_l2
 
             enforce_detection (bool): The function throws exception if a face could not be detected.
-            Set this to False if you don't want to get exception. This might be convenient for low
+            Set this to True if you don't want to get exception. This might be convenient for low
             resolution images.
 
             detector_backend (string): set face detector backend to opencv, retinaface, mtcnn, ssd,
-            dlib, mediapipe or yolov8.
-
-            align (boolean): alignment according to the eye positions.
-
-            normalization (string): normalize the input image before feeding to model
+            dlib or mediapipe
 
             silent (boolean): disable some logging and progress bars
 
@@ -441,7 +422,6 @@ def find(
             This function returns list of pandas data frame. Each item of the list corresponding to
             an identity in the img_path.
     """
-
     tic = time.time()
 
     # -------------------------------
@@ -557,7 +537,7 @@ def find(
 
     resp_obj = []
 
-    for target_img, target_region, _ in target_objs:
+    for target_img, target_region, target_confidence in target_objs:
         target_embedding_obj = represent(
             img_path=target_img,
             model_name=model_name,
@@ -574,7 +554,6 @@ def find(
         result_df["source_y"] = target_region["y"]
         result_df["source_w"] = target_region["w"]
         result_df["source_h"] = target_region["h"]
-
         distances = []
         for index, instance in df.iterrows():
             source_representation = instance[f"{model_name}_representation"]
@@ -602,17 +581,25 @@ def find(
         result_df = result_df[result_df[f"{model_name}_{distance_metric}"] <= threshold]
         result_df = result_df.sort_values(
             by=[f"{model_name}_{distance_metric}"], ascending=True
-        ).reset_index(drop=True)
+        ).reset_index(drop=False)
 
-        resp_obj.append(result_df)
-
+        # discard expanded dimension
+        if len(target_img.shape) == 4:
+            target_img = target_img[0]
+        resp_obj.append(
+            {
+                "confidence": target_confidence,
+                "normalized_image":target_img,
+                "region": target_region,
+                "match_result":result_df,
+            }
+        )
     # -----------------------------------
 
     toc = time.time()
 
     if not silent:
         print("find function lasts ", toc - tic, " seconds")
-
     return resp_obj
 
 
@@ -624,6 +611,7 @@ def represent(
     align=True,
     normalization="base",
 ):
+
     """
     This function represents facial images as vectors. The function uses convolutional neural
     networks models to generate vector embeddings.
@@ -641,7 +629,7 @@ def represent(
             This might be convenient for low resolution images.
 
             detector_backend (string): set face detector backend to opencv, retinaface, mtcnn, ssd,
-            dlib, mediapipe or yolov8.
+            dlib or mediapipe
 
             align (boolean): alignment according to the eye positions.
 
@@ -686,7 +674,7 @@ def represent(
         img_objs = [(img, img_region, 0)]
     # ---------------------------------
 
-    for img, region, confidence in img_objs:
+    for img, region, _ in img_objs:
         # custom normalization
         img = functions.normalize_input(img=img, normalization=normalization)
 
@@ -701,7 +689,6 @@ def represent(
         resp_obj = {}
         resp_obj["embedding"] = embedding
         resp_obj["facial_area"] = region
-        resp_obj["face_confidence"] = confidence
         resp_objs.append(resp_obj)
 
     return resp_objs
@@ -717,6 +704,7 @@ def stream(
     time_threshold=5,
     frame_threshold=5,
 ):
+
     """
     This function applies real time face recognition and facial attribute analysis
 
@@ -726,7 +714,7 @@ def stream(
             model_name (string): VGG-Face, Facenet, Facenet512, OpenFace, DeepFace, DeepID, Dlib,
             ArcFace, SFace
 
-            detector_backend (string): opencv, retinaface, mtcnn, ssd, dlib, mediapipe or yolov8.
+            detector_backend (string): opencv, retinaface, mtcnn, ssd, dlib or mediapipe
 
             distance_metric (string): cosine, euclidean, euclidean_l2
 
@@ -771,6 +759,7 @@ def extract_faces(
     align=True,
     grayscale=False,
 ):
+
     """
     This function applies pre-processing stages of a face recognition pipeline
     including detection and alignment
@@ -829,40 +818,11 @@ def extract_faces(
 # deprecated functions
 
 
-@deprecated(version="0.0.78", reason="Use DeepFace.extract_faces instead of DeepFace.detectFace")
 def detectFace(
     img_path, target_size=(224, 224), detector_backend="opencv", enforce_detection=True, align=True
 ):
-    """
-    Deprecated function. Use extract_faces for same functionality.
+    print("⚠️ Function detectFace is deprecated! Use extract_faces instead of this.")
 
-    This function applies pre-processing stages of a face recognition pipeline
-    including detection and alignment
-
-    Parameters:
-            img_path: exact image path, numpy array (BGR) or base64 encoded image.
-            Source image can have many face. Then, result will be the size of number
-            of faces appearing in that source image.
-
-            target_size (tuple): final shape of facial image. black pixels will be
-            added to resize the image.
-
-            detector_backend (string): face detection backends are retinaface, mtcnn,
-            opencv, ssd or dlib
-
-            enforce_detection (boolean): function throws exception if face cannot be
-            detected in the fed image. Set this to False if you do not want to get
-            an exception and run the function anyway.
-
-            align (boolean): alignment according to the eye positions.
-
-            grayscale (boolean): extracting faces in rgb or gray scale
-
-    Returns:
-            detected and aligned face as numpy array
-
-    """
-    print("⚠️ Function detectFace is deprecated. Use extract_faces instead.")
     face_objs = extract_faces(
         img_path=img_path,
         target_size=target_size,
